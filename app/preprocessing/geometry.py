@@ -1,7 +1,7 @@
 """
 Document Boundary Detection, Canonical Perspective Geometry Transformation,
 Resolution Normalization, and Bidirectional Coordinate Tracking.
-Calculates 4-point homography and produces CoordinateTransform containers.
+Calculates 4-point homography with strict singularity and distortion safeguards.
 """
 
 from typing import List, Tuple, Dict, Any, Optional, Union
@@ -40,7 +40,7 @@ def rotate_image(image: np.ndarray, angle: float) -> np.ndarray:
 def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
     """
     Multi-strategy document boundary detector.
-    Enforces minimum 65% image area coverage to prevent cropping internal barcode/photo boxes.
+    Enforces minimum 50% image area coverage, convexity, and aspect ratio safeguards.
     """
     if image is None or image.size == 0:
         return DocumentBoundary(detected=False, confidence=0.0, method="failed")
@@ -59,7 +59,7 @@ def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
 
         for cnt in sorted_contours[:5]:
             area = cv2.contourArea(cnt)
-            if area < (img_area * 0.65):
+            if area < (img_area * 0.50):
                 continue
 
             peri = cv2.arcLength(cnt, True)
@@ -67,13 +67,18 @@ def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
 
             if len(approx) == 4:
                 pts = approx.reshape(4, 2).astype("float32")
+
+                # SAFEGUARD: Quadrilateral contour MUST be convex
+                if not cv2.isContourConvex(approx):
+                    continue
+
                 ordered = order_points(pts)
 
                 rect_w = np.linalg.norm(ordered[1] - ordered[0])
                 rect_h = np.linalg.norm(ordered[3] - ordered[0])
                 if rect_h > 0:
                     aspect = rect_w / rect_h
-                    if 1.15 <= aspect <= 2.0:
+                    if 1.10 <= aspect <= 2.20:
                         conf = min(0.95, float(area / img_area) + 0.1)
                         corners_list = [(float(pt[0]), float(pt[1])) for pt in ordered]
                         return DocumentBoundary(
@@ -100,8 +105,8 @@ def warp_perspective(
     target_width: int = 2000
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, CoordinateTransform]:
     """
-    Perform 4-point homography perspective warp to Canonical Image space.
-    Returns (canonical_image, M_forward, M_inverse, coordinate_transform).
+    Perform 4-point homography perspective warp to Canonical Image space
+    with strict distortion and singularity safeguards.
     """
     h_img, w_img = image.shape[:2]
 
@@ -111,51 +116,78 @@ def warp_perspective(
     elif isinstance(boundary, (list, tuple, np.ndarray)):
         corners = list(boundary)
 
-    if not corners or len(corners) != 4:
-        M = np.eye(3, dtype=np.float32)
+    def fallback_identity(img: np.ndarray, tw: int, th: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, CoordinateTransform]:
+        resized = cv2.resize(img, (tw, th), interpolation=cv2.INTER_CUBIC)
+        M_fw = np.array([
+            [float(tw) / max(1, w_img), 0, 0],
+            [0, float(th) / max(1, h_img), 0],
+            [0, 0, 1]
+        ], dtype=np.float32)
+        M_inv = np.linalg.inv(M_fw)
         coord_tx = CoordinateTransform(
-            original_to_canonical=M,
-            canonical_to_original=M,
+            original_to_canonical=M_fw,
+            canonical_to_original=M_inv,
             original_size=(w_img, h_img),
-            canonical_size=(w_img, h_img)
+            canonical_size=(tw, th)
         )
-        return image.copy(), M, M, coord_tx
+        return resized, M_fw, M_inv, coord_tx
+
+    target_height = int(target_width / target_aspect_ratio) if target_aspect_ratio > 0 else 1261
+
+    if not corners or len(corners) != 4:
+        return fallback_identity(image, target_width, target_height)
 
     pts = np.array(corners, dtype="float32")
+
+    # SAFEGUARD 1: Convexity check
+    pts_int = pts.reshape(-1, 1, 2).astype(np.int32)
+    if not cv2.isContourConvex(pts_int):
+        return fallback_identity(image, target_width, target_height)
+
     rect = order_points(pts)
     (tl, tr, br, bl) = rect
 
-    max_width = target_width
-    if target_aspect_ratio > 0:
-        max_height = int(max_width / target_aspect_ratio)
-    else:
-        height_A = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-        height_B = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-        max_height = max(int(height_A), int(height_B))
+    width_A = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+    width_B = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+    max_width = max(int(width_A), int(width_B))
 
-    max_width = max(100, max_width)
-    max_height = max(100, max_height)
+    height_A = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+    height_B = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+    max_height = max(int(height_A), int(height_B))
+
+    # SAFEGUARD 2: Aspect ratio distortion check
+    if max_height > 0 and target_aspect_ratio > 0:
+        actual_aspect = float(max_width) / float(max_height)
+        if abs(actual_aspect - target_aspect_ratio) / target_aspect_ratio > 0.40:
+            return fallback_identity(image, target_width, target_height)
 
     dst = np.array([
         [0, 0],
-        [max_width - 1, 0],
-        [max_width - 1, max_height - 1],
-        [0, max_height - 1]
+        [target_width - 1, 0],
+        [target_width - 1, target_height - 1],
+        [0, target_height - 1]
     ], dtype="float32")
 
-    M_forward = cv2.getPerspectiveTransform(rect, dst)
-    M_inverse = cv2.getPerspectiveTransform(dst, rect)
+    try:
+        M_forward = cv2.getPerspectiveTransform(rect, dst)
+        # SAFEGUARD 3: Determinant / Singularity check
+        det = float(np.linalg.det(M_forward))
+        if np.isnan(det) or np.isinf(det) or abs(det) < 1e-7 or abs(det) > 1e7:
+            return fallback_identity(image, target_width, target_height)
 
-    canonical_img = cv2.warpPerspective(image, M_forward, (max_width, max_height))
+        M_inverse = cv2.getPerspectiveTransform(dst, rect)
+        canonical_img = cv2.warpPerspective(image, M_forward, (target_width, target_height))
 
-    coord_tx = CoordinateTransform(
-        original_to_canonical=M_forward,
-        canonical_to_original=M_inverse,
-        original_size=(w_img, h_img),
-        canonical_size=(max_width, max_height)
-    )
+        coord_tx = CoordinateTransform(
+            original_to_canonical=M_forward,
+            canonical_to_original=M_inverse,
+            original_size=(w_img, h_img),
+            canonical_size=(target_width, target_height)
+        )
 
-    return canonical_img, M_forward, M_inverse, coord_tx
+        return canonical_img, M_forward, M_inverse, coord_tx
+    except Exception:
+        return fallback_identity(image, target_width, target_height)
 
 
 def apply_perspective_transform(
