@@ -154,8 +154,14 @@ class LLMReconciler:
 
                     if remaining_date_tokens:
                         val = remaining_date_tokens[0][0]
-                        token_indices = [remaining_date_tokens[0][1]]
-                        raw_val = tokens[remaining_date_tokens[0][1]].text if remaining_date_tokens[0][1] < len(tokens) else val
+                        tok_idx = remaining_date_tokens[0][1]
+                        token_indices = [tok_idx]
+                        if tok_idx < len(tokens):
+                            raw_val = tokens[tok_idx].text
+                            ocr_conf = float(tokens[tok_idx].confidence)
+                            spatial_conf = 0.90
+                        else:
+                            raw_val = val
                         source = "visual_ocr"
                     elif cand_val_iso and cand_val_iso != dob_val:
                         val = cand_val_iso
@@ -253,7 +259,7 @@ class LLMReconciler:
             except Exception:
                 pass
 
-        needs_review = len(review_reasons) > 0 or any(r.decision == "REVIEW" for r in reconciled_fields.values())
+        needs_review = len(review_reasons) > 0 or any(r.decision == "REVIEW" for r in reconciled_fields.values() if r.decision != "UNKNOWN")
         status_str = "review" if needs_review else "success"
 
         return LLMDocumentResult(
