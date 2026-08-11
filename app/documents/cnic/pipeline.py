@@ -1,24 +1,31 @@
 """
-Master Pipeline for Pakistani CNIC (Front & Back).
-Integrates Adaptive Preprocessing, OCRCandidateEvaluator, DocumentClassifier,
-Bilingual Field Association, Traceability, and Human Review State Evaluation.
+Master Canonicalized Field-Specific Pipeline for Pakistani CNIC (Front & Back).
+Integrates Canonicalization, Landmark Fallback, Global OCR, Field ROI Resolution,
+Field-Specific Preprocessing Profiles (Urdu-Safe, Numeric, Date), Candidate Scoring, and Review Decisions.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import time
+import numpy as np
+
 from app.core.versioning import PIPELINE_VERSION, CONFIG_VERSION_DEFAULT, PARSER_VERSION_DEFAULT
+from app.core.models import FieldROI, FieldResult, FieldProvenance
 from app.preprocessing.pipeline import AdaptivePreprocessor
+from app.preprocessing.profiles import preprocess_field_profile
 from app.ocr.paddle import PaddleOCRAdapter
 from app.ocr.evaluator import OCRCandidateEvaluator
 from app.classification.classifier import DocumentClassifier
 from app.documents.cnic.parser import CNICParser
+from app.extraction.regions import resolve_field_roi
+from app.extraction.scoring import calculate_field_candidate_score, select_best_field_candidate
 from app.validation.cross_field import validate_cross_fields
 from app.review.engine import evaluate_review_state
+from app.core.privacy import sanitize_dict_for_logging
 
 
 class CNICPipeline:
     """
-    Master pipeline for CNIC front and back document processing.
+    Master pipeline for CNIC front and back document processing with Canonical Field-Specific ROIs.
     """
 
     def __init__(self, performance_mode: str = "balanced"):
@@ -35,37 +42,86 @@ class CNICPipeline:
         debug: bool = False
     ) -> Dict[str, Any]:
         """
-        Execute CNIC processing end-to-end and return structured JSON.
+        Execute CNIC processing end-to-end using Canonical Field-Specific ROIs.
         """
         start_t = time.time()
         expected_type = "cnic_back" if doc_side == "back" else "cnic_front"
 
-        # 1. Adaptive Preprocessing
+        # 1. Adaptive Preprocessing & Canonicalization
         prep_res = self.preprocessor.process(image_input, document_type=expected_type)
+        canonical_img = prep_res["canonical_image"]
+        coord_tx = prep_res["coordinate_transform"]
+        M_inverse = prep_res["processed_to_original_matrix"]
 
-        # 2. Candidate Evaluation across preprocessing variants
-        best_ocr = None
-        best_variant = None
-        best_score = -1.0
+        # 2. Global OCR (for verification, anchors, layout analysis, debugging)
+        global_ocr = self.ocr_engine.extract_tokens(canonical_img, document_type=expected_type)
+        classification = DocumentClassifier.classify(global_ocr, explicit_type=expected_type)
 
-        for variant in prep_res["variants"]:
-            raw_ocr = self.ocr_engine.extract_tokens(variant.image, document_type=expected_type)
-            score_obj = OCRCandidateEvaluator.evaluate(raw_ocr, document_type=expected_type)
-            if score_obj.total_score > best_score:
-                best_score = score_obj.total_score
-                best_ocr = raw_ocr
-                best_variant = variant
-
-        if best_ocr is None:
-            best_ocr = self.ocr_engine.extract_tokens(prep_res["best_image"], document_type=expected_type)
-            best_variant = prep_res["variants"][0]
-
-        # 3. Document Classification
-        classification = DocumentClassifier.classify(best_ocr, explicit_type=expected_type)
-
-        # 4. Field Parsing
+        # 3. Primary Field Parsing & Candidate Generation
         parser = self.parser_back if doc_side == "back" else self.parser_front
-        parsed_res = parser.parse(best_ocr, inverse_matrix=prep_res["processed_to_original_matrix"], variant_name=best_variant.name)
+        parsed_res = parser.parse(
+            global_ocr,
+            inverse_matrix=M_inverse,
+            variant_name="canonical"
+        )
+
+        fields_cfg = parser.config.get("fields", {})
+        fused_fields: Dict[str, Any] = parsed_res["fields"].copy()
+
+        # 4. Field ROI Resolution & Field-Specific OCR
+        for field_name, f_cfg in fields_cfg.items():
+            reg_cfg = f_cfg.get("region")
+            profile_name = f_cfg.get("preprocessing_profile", "standard")
+            strategy = f_cfg.get("strategy", "region")
+
+            if reg_cfg:
+                field_roi = resolve_field_roi(
+                    canonical_image=canonical_img,
+                    field_name=field_name,
+                    region=reg_cfg,
+                    M_inverse=M_inverse,
+                    source=strategy
+                )
+
+                # Apply Field-Specific Preprocessing Profile
+                processed_roi_img = preprocess_field_profile(field_roi.image, profile=profile_name)
+
+                # Field-Specific OCR on cropped ROI
+                field_ocr = self.ocr_engine.extract_tokens(processed_roi_img, document_type=expected_type)
+                roi_text = field_ocr.raw_text.strip()
+
+                if roi_text:
+                    cand_parsed = parser.parse(field_ocr, inverse_matrix=M_inverse, variant_name=f"roi_{profile_name}")
+                    roi_field_obj = cand_parsed["fields"].get(field_name)
+
+                    if roi_field_obj and roi_field_obj.get("value"):
+                        # Candidate Scoring
+                        best_cand = select_best_field_candidate([
+                            {**fused_fields.get(field_name, {}), "strategy": strategy},
+                            {**roi_field_obj, "strategy": strategy, "is_anchor_matched": False}
+                        ])
+
+                        provenance = FieldProvenance(
+                            ocr_engine="paddleocr_ppocrv4",
+                            model="PP-OCRv4",
+                            preprocessing_profile=profile_name,
+                            variant=f"canonical_roi_{profile_name}",
+                            region=field_name,
+                            bbox_canonical=[float(x) for x in field_roi.bbox_canonical],
+                            bbox_original=[float(x) for x in field_roi.bbox_original],
+                            bbox_norm=field_roi.bbox_norm,
+                            bbox_px=[float(x) for x in field_roi.bbox_canonical]
+                        )
+
+                        best_cand["source"] = provenance.model_dump()
+                        best_cand["bbox"] = field_roi.bbox_canonical
+                        best_cand["bbox_norm"] = field_roi.bbox_norm
+                        best_cand["bbox_canonical"] = field_roi.bbox_canonical
+                        best_cand["bbox_original"] = field_roi.bbox_original
+
+                        fused_fields[field_name] = best_cand
+
+        parsed_res["fields"] = fused_fields
 
         # 5. Cross-field validation & Warnings
         warnings = prep_res["quality_report"].warnings.copy()
@@ -81,16 +137,14 @@ class CNICPipeline:
 
         elapsed_ms = (time.time() - start_t) * 1000.0
 
-        # Audit metadata
         audit_trail = {
             "pipeline_version": PIPELINE_VERSION,
             "config_version": CONFIG_VERSION_DEFAULT,
             "parser_version": PARSER_VERSION_DEFAULT,
             "document_type": expected_type,
             "classification": classification.model_dump(),
-            "selected_variant": best_variant.name,
-            "ocr_engine": self.ocr_engine.rapid_adapter.model_version if self.ocr_engine.rapid_adapter.engine else "paddleocr",
-            "candidate_score": best_score,
+            "canonical_dimensions": {"width": canonical_img.shape[1], "height": canonical_img.shape[0]},
+            "ocr_engine": "paddleocr_ppocrv4",
             "processing_time_ms": round(elapsed_ms, 2)
         }
 
@@ -110,9 +164,11 @@ class CNICPipeline:
                 "rotation": {"applied": True, "angle": 0.0},
                 "stages": [s.name for s in prep_res["stages"]]
             },
-            "raw_ocr": best_ocr.__dict__,
+            "raw_ocr": global_ocr.__dict__,
             "audit_trail": audit_trail,
             "warnings": warnings
         }
+
+        sanitized_logging_summary = sanitize_dict_for_logging(audit_trail)
 
         return result

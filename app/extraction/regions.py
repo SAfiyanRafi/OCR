@@ -1,10 +1,14 @@
 """
-Region Token Containment Extractor.
-Supports center-point, bounding box overlap, and Intersection-over-Union (IoU) containment modes.
+Region Token Containment Extractor & Field ROI Resolver.
+Supports canonical coordinate translation, margin cropping, dual canonical/original
+bounding box tracking, and center/overlap/IoU containment modes.
 """
 
 from typing import List, Dict, Any, Optional, Tuple, Union
-from app.core.models import OCRToken, RegionConfig
+import numpy as np
+
+from app.core.models import OCRToken, RegionConfig, FieldROI
+from app.preprocessing.geometry import transform_bbox_canonical_to_original
 
 
 def normalize_bbox(bbox: Tuple[float, float, float, float], img_width: float = 1000.0, img_height: float = 1000.0) -> Tuple[float, float, float, float]:
@@ -67,6 +71,57 @@ def calculate_iou(bboxA: Tuple[float, float, float, float], bboxB: Tuple[float, 
 def is_point_inside_rect(px: float, py: float, rect: List[float]) -> bool:
     """Check if point (px, py) is inside normalized rectangle [x1, y1, x2, y2]."""
     return rect[0] <= px <= rect[2] and rect[1] <= py <= rect[3]
+
+
+def resolve_field_roi(
+    canonical_image: np.ndarray,
+    field_name: str,
+    region: Union[Dict[str, Any], RegionConfig],
+    M_inverse: Optional[np.ndarray] = None,
+    source: str = "region"
+) -> FieldROI:
+    """
+    Resolve FieldROI by converting normalized canonical coordinates to pixel space,
+    applying margins, cropping ROI image, and calculating original image coordinates.
+    """
+    h_can, w_can = canonical_image.shape[:2]
+
+    if isinstance(region, RegionConfig):
+        rx1, ry1, rx2, ry2 = region.x1, region.y1, region.x2, region.y2
+        margin = region.margin
+    else:
+        rx1 = float(region.get("x1", 0.0))
+        ry1 = float(region.get("y1", 0.0))
+        rx2 = float(region.get("x2", 1.0))
+        ry2 = float(region.get("y2", 1.0))
+        margin = float(region.get("margin", 0.0))
+
+    # Convert to canonical pixel coordinates with margin expansion
+    mx = margin * w_can
+    my = margin * h_can
+
+    x1_px = int(max(0, (rx1 * w_can) - mx))
+    y1_px = int(max(0, (ry1 * h_can) - my))
+    x2_px = int(min(w_can, (rx2 * w_can) + mx))
+    y2_px = int(min(h_can, (ry2 * h_can) + my))
+
+    # Crop Field ROI from canonical image
+    roi_img = canonical_image[y1_px:y2_px, x1_px:x2_px].copy() if (x2_px > x1_px and y2_px > y1_px) else canonical_image.copy()
+
+    bbox_canonical = [x1_px, y1_px, x2_px, y2_px]
+    bbox_norm = [round(x1_px / max(1, w_can), 4), round(y1_px / max(1, h_can), 4), round(x2_px / max(1, w_can), 4), round(y2_px / max(1, h_can), 4)]
+
+    # Transform bbox to original image space
+    bbox_original = [int(x) for x in transform_bbox_canonical_to_original(bbox_canonical, M_inverse)]
+
+    return FieldROI(
+        field_name=field_name,
+        image=roi_img,
+        bbox_canonical=bbox_canonical,
+        bbox_original=bbox_original,
+        bbox_norm=bbox_norm,
+        source=source
+    )
 
 
 def extract_tokens_in_region(

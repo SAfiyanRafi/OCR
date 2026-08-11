@@ -1,7 +1,7 @@
 """
-Adaptive Document Image Preprocessing Pipeline.
-Executes standardized image format normalization (resolution, shadow flattening, contrast equalization)
-and tracks transformation matrices.
+Adaptive Document Image Preprocessing & Canonicalization Pipeline.
+Executes quality analysis, boundary detection, landmark template fallback alignment,
+and produces the Canonical Image along with CoordinateTransform tracking.
 """
 
 from typing import List, Dict, Any, Tuple, Optional
@@ -10,11 +10,12 @@ import cv2
 import numpy as np
 
 from app.core.models import (
-    QualityReport, PreprocessingPlan, ImageStage, DocumentBoundary, DocumentConfig
+    QualityReport, PreprocessingPlan, ImageStage, DocumentBoundary, DocumentConfig, CoordinateTransform
 )
 from app.preprocessing.quality import QualityAnalyzer
 from app.preprocessing.decision import PreprocessingPlanner
 from app.preprocessing.geometry import detect_document_boundary, warp_perspective, normalize_resolution
+from app.preprocessing.landmark import LandmarkAligner
 from app.preprocessing.orientation import fix_exif_orientation, detect_and_deskew, read_exif_orientation
 from app.preprocessing.illumination import correct_illumination
 from app.preprocessing.contrast import enhance_contrast_clahe
@@ -51,7 +52,7 @@ class PreprocessingResultContainer(dict):
 
 class AdaptivePreprocessor:
     """
-    Master adaptive preprocessor converting all incoming document photos to a standardized normalized format.
+    Master adaptive preprocessor converting all incoming document photos into a Canonical Document Image.
     """
 
     def __init__(self, performance_mode: str = "balanced"):
@@ -109,15 +110,9 @@ class AdaptivePreprocessor:
         if image is None or image.size == 0:
             return image
 
-        # 1. Resolution Standardization
         res_normalized, _ = normalize_resolution(image, min_width=target_width, max_width=target_width)
-
-        # 2. Shadow & Illumination Flattening
         shadow_free = correct_illumination(res_normalized)
-
-        # 3. LAB CLAHE Contrast Equalization
         contrast_equalized = enhance_contrast_clahe(shadow_free)
-
         return contrast_equalized
 
     def process(
@@ -130,20 +125,21 @@ class AdaptivePreprocessor:
         config: Optional[DocumentConfig] = None
     ) -> PreprocessingResultContainer:
         """
-        Execute adaptive pipeline converting all document photos into a standardized normalized format.
+        Execute adaptive pipeline producing the Canonical Image and CoordinateTransform container.
         """
         target_input = image_input if image_input is not None else input_data
         if target_input is None:
             raise ValueError("No image input provided to preprocessor.")
 
         original_img, _ = self.normalize_input_image(target_input)
+        h_orig, w_orig = original_img.shape[:2]
         stages: List[ImageStage] = []
 
         stages.append(ImageStage(
             name="original",
             image=original_img.copy(),
             parent_stage=None,
-            metadata={"width": original_img.shape[1], "height": original_img.shape[0]}
+            metadata={"width": w_orig, "height": h_orig}
         ))
 
         exif_fixed, exif_applied = fix_exif_orientation(original_img)
@@ -155,72 +151,92 @@ class AdaptivePreprocessor:
             metadata={"applied": exif_applied}
         ))
 
-        # Standardized Resolution & Format Normalization
-        format_normalized = self.normalize_image_format(curr_img, target_width=2000)
-        stages.append(ImageStage(
-            name="format_normalized",
-            image=format_normalized.copy(),
-            parent_stage="orientation_corrected",
-            metadata={"target_width": 2000, "illumination_corrected": True, "clahe_enhanced": True}
-        ))
-
-        curr_img = format_normalized
-
+        # Quality Analysis
         boundary = detect_document_boundary(curr_img)
         quality = QualityAnalyzer.analyze(curr_img, boundary_confidence=boundary.confidence)
         plan = PreprocessingPlanner.plan(quality, config=config, performance_mode=self.performance_mode)
 
+        target_aspect = 1.5858 if "cnic" in document_type else 1.4205
+        target_w = 2000
+        target_h = int(target_w / target_aspect)
+
+        canonical_img = None
         M_forward = np.eye(3, dtype=np.float32)
         M_inverse = np.eye(3, dtype=np.float32)
+        coord_tx = None
 
+        # 1. Perspective Transformation when boundary confidence >= 0.60
         if plan.perspective_correction and boundary.detected and boundary.confidence >= 0.60:
-            target_aspect = 1.5858 if "cnic" in document_type else 1.4205
-            if config and config.geometry:
-                target_aspect = config.geometry.expected_aspect_ratio
-
-            warped, M_fw, M_inv = warp_perspective(curr_img, boundary, target_aspect_ratio=target_aspect)
-            curr_img = warped
+            warped, M_fw, M_inv, coord_tx = warp_perspective(
+                curr_img, boundary, target_aspect_ratio=target_aspect, target_width=target_w
+            )
+            canonical_img = warped
             M_forward = M_fw
             M_inverse = M_inv
             stages.append(ImageStage(
                 name="perspective_corrected",
-                image=curr_img.copy(),
-                parent_stage="format_normalized",
+                image=canonical_img.copy(),
+                parent_stage="orientation_corrected",
                 metadata={"boundary_method": boundary.method, "confidence": boundary.confidence}
+            ))
+        else:
+            # 2. Template / Landmark Fallback Alignment when boundary confidence < 0.60
+            canonical_img, M_fw, M_inv, coord_tx, landmark_success = LandmarkAligner.align_to_template(
+                curr_img, document_type=document_type, target_width=target_w, target_height=target_h
+            )
+            M_forward = M_fw
+            M_inverse = M_inv
+            stages.append(ImageStage(
+                name="landmark_aligned",
+                image=canonical_img.copy(),
+                parent_stage="orientation_corrected",
+                metadata={"landmark_matched": landmark_success}
             ))
 
         if plan.deskew:
-            deskewed_img, angle = detect_and_deskew(curr_img)
-            curr_img = deskewed_img
+            deskewed_img, angle = detect_and_deskew(canonical_img)
+            canonical_img = deskewed_img
             stages.append(ImageStage(
                 name="deskewed",
-                image=curr_img.copy(),
-                parent_stage="perspective_corrected" if len(stages) > 3 else "format_normalized",
+                image=canonical_img.copy(),
+                parent_stage=stages[-1].name,
                 metadata={"rotation_angle": angle}
             ))
 
+        # Standardized Format Normalization
+        formatted_canonical = self.normalize_image_format(canonical_img, target_width=target_w)
+        stages.append(ImageStage(
+            name="canonical_normalized",
+            image=formatted_canonical.copy(),
+            parent_stage=stages[-1].name,
+            metadata={"width": target_w, "height": target_h}
+        ))
+
+        curr_img = formatted_canonical
+
         variants: List[PreprocessingVariant] = []
         if plan.generate_variants:
-            variants = generate_candidate_variants(curr_img, base_name="processed")
-            # Always append original un-warped image as a candidate variant for safety
+            variants = generate_candidate_variants(curr_img, base_name="canonical")
             variants.append(PreprocessingVariant(
                 id="var_00_original",
-                name="processed_00_original",
+                name="canonical_00_original",
                 image=original_img.copy(),
                 transformations=["original"]
             ))
         else:
             variants = [PreprocessingVariant(id="var_0", name="default", image=curr_img)]
 
-        # Save debug images if requested
         if debug and debug_dir:
             os.makedirs(debug_dir, exist_ok=True)
             cv2.imwrite(os.path.join(debug_dir, "01_original.jpg"), original_img)
+            cv2.imwrite(os.path.join(debug_dir, "10_canonical.jpg"), curr_img)
             cv2.imwrite(os.path.join(debug_dir, "10_final.jpg"), curr_img)
 
         return PreprocessingResultContainer({
             "best_image": curr_img,
+            "canonical_image": curr_img,
             "original_image": original_img,
+            "coordinate_transform": coord_tx,
             "document_type": document_type,
             "stages": stages,
             "quality_report": quality,

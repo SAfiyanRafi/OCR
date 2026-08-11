@@ -1,13 +1,13 @@
 """
-Document Boundary Detection & Perspective Geometry Transformation.
-Calculates 4-point homography and tracks forward/inverse transformation matrices.
-Enforces strict 65% minimum area threshold and quad aspect ratio safeguards to prevent warping distortion.
+Document Boundary Detection, Canonical Perspective Geometry Transformation,
+Resolution Normalization, and Bidirectional Coordinate Tracking.
+Calculates 4-point homography and produces CoordinateTransform containers.
 """
 
 from typing import List, Tuple, Dict, Any, Optional, Union
 import cv2
 import numpy as np
-from app.core.models import DocumentBoundary
+from app.core.models import DocumentBoundary, CoordinateTransform
 from app.preprocessing.orientation import detect_and_deskew, detect_orthogonal_orientation
 
 
@@ -59,7 +59,6 @@ def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
 
         for cnt in sorted_contours[:5]:
             area = cv2.contourArea(cnt)
-            # SAFEGUARD: Contour MUST cover at least 65% of the total document image area
             if area < (img_area * 0.65):
                 continue
 
@@ -70,7 +69,6 @@ def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
                 pts = approx.reshape(4, 2).astype("float32")
                 ordered = order_points(pts)
 
-                # Validate aspect ratio (landscape cards: 1.15 to 2.0)
                 rect_w = np.linalg.norm(ordered[1] - ordered[0])
                 rect_h = np.linalg.norm(ordered[3] - ordered[0])
                 if rect_h > 0:
@@ -85,7 +83,6 @@ def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
                             method="contour"
                         )
 
-    # Fallback to Full Image Bounds to prevent partial cropping
     full_pts = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype="float32")
     corners_list = [(float(pt[0]), float(pt[1])) for pt in full_pts]
     return DocumentBoundary(
@@ -99,10 +96,12 @@ def detect_document_boundary(image: np.ndarray) -> DocumentBoundary:
 def warp_perspective(
     image: np.ndarray,
     boundary: Union[DocumentBoundary, List[Tuple[float, float]], np.ndarray],
-    target_aspect_ratio: float = 1.5858
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    target_aspect_ratio: float = 1.5858,
+    target_width: int = 2000
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, CoordinateTransform]:
     """
-    Perform 4-point homography perspective warp with distortion safeguards.
+    Perform 4-point homography perspective warp to Canonical Image space.
+    Returns (canonical_image, M_forward, M_inverse, coordinate_transform).
     """
     h_img, w_img = image.shape[:2]
 
@@ -114,29 +113,25 @@ def warp_perspective(
 
     if not corners or len(corners) != 4:
         M = np.eye(3, dtype=np.float32)
-        return image.copy(), M, M
+        coord_tx = CoordinateTransform(
+            original_to_canonical=M,
+            canonical_to_original=M,
+            original_size=(w_img, h_img),
+            canonical_size=(w_img, h_img)
+        )
+        return image.copy(), M, M, coord_tx
 
     pts = np.array(corners, dtype="float32")
     rect = order_points(pts)
     (tl, tr, br, bl) = rect
 
-    width_A = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-    width_B = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-    max_width = max(int(width_A), int(width_B))
-
-    height_A = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-    height_B = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-    max_height = max(int(height_A), int(height_B))
-
-    # SAFEGUARD: Aspect ratio distortion check (if quad is degenerate, bypass warp)
-    if max_height > 0:
-        actual_aspect = float(max_width) / float(max_height)
-        if abs(actual_aspect - target_aspect_ratio) / target_aspect_ratio > 0.35:
-            M = np.eye(3, dtype=np.float32)
-            return image.copy(), M, M
-
+    max_width = target_width
     if target_aspect_ratio > 0:
         max_height = int(max_width / target_aspect_ratio)
+    else:
+        height_A = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        height_B = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        max_height = max(int(height_A), int(height_B))
 
     max_width = max(100, max_width)
     max_height = max(100, max_height)
@@ -151,17 +146,25 @@ def warp_perspective(
     M_forward = cv2.getPerspectiveTransform(rect, dst)
     M_inverse = cv2.getPerspectiveTransform(dst, rect)
 
-    warped = cv2.warpPerspective(image, M_forward, (max_width, max_height))
+    canonical_img = cv2.warpPerspective(image, M_forward, (max_width, max_height))
 
-    return warped, M_forward, M_inverse
+    coord_tx = CoordinateTransform(
+        original_to_canonical=M_forward,
+        canonical_to_original=M_inverse,
+        original_size=(w_img, h_img),
+        canonical_size=(max_width, max_height)
+    )
+
+    return canonical_img, M_forward, M_inverse, coord_tx
 
 
 def apply_perspective_transform(
     image: np.ndarray,
     boundary: Union[DocumentBoundary, List[Tuple[float, float]], np.ndarray],
-    target_aspect_ratio: float = 1.5858
+    target_aspect_ratio: float = 1.5858,
+    target_width: int = 2000
 ) -> np.ndarray:
-    warped, _, _ = warp_perspective(image, boundary, target_aspect_ratio)
+    warped, _, _, _ = warp_perspective(image, boundary, target_aspect_ratio=target_aspect_ratio, target_width=target_width)
     return warped
 
 
@@ -172,7 +175,7 @@ def estimate_deskew_angle(image: np.ndarray, max_angle: float = 15.0) -> float:
 
 def detect_document_boundary_and_warp(image: np.ndarray, target_aspect_ratio: float = 1.5858) -> Tuple[np.ndarray, bool]:
     b = detect_document_boundary(image)
-    warped = apply_perspective_transform(image, b.corners, target_aspect_ratio)
+    warped = apply_perspective_transform(image, b.corners, target_aspect_ratio=target_aspect_ratio)
     return warped, b.detected
 
 
@@ -183,6 +186,9 @@ def normalize_resolution(
     min_width: Optional[int] = None,
     max_width: Optional[int] = None
 ) -> Tuple[np.ndarray, float]:
+    """
+    Normalize image resolution scaling width between target bounds.
+    """
     target_min = min_width if min_width is not None else min_dim
     target_max = max_width if max_width is not None else max_dim
 
@@ -202,20 +208,63 @@ def normalize_resolution(
     return image, 1.0
 
 
-def transform_bbox_inverse(
+def transform_point_canonical_to_original(pt: Tuple[float, float], M_inverse: np.ndarray) -> Tuple[float, float]:
+    """Transform canonical coordinate (x, y) back to original image space."""
+    if np.array_equal(M_inverse, np.eye(3)):
+        return pt
+    pts = np.array([[[pt[0], pt[1]]]], dtype=np.float32)
+    transformed = cv2.perspectiveTransform(pts, M_inverse)
+    return (float(transformed[0, 0, 0]), float(transformed[0, 0, 1]))
+
+
+def transform_point_original_to_canonical(pt: Tuple[float, float], M_forward: np.ndarray) -> Tuple[float, float]:
+    """Transform original coordinate (x, y) to canonical image space."""
+    if np.array_equal(M_forward, np.eye(3)):
+        return pt
+    pts = np.array([[[pt[0], pt[1]]]], dtype=np.float32)
+    transformed = cv2.perspectiveTransform(pts, M_forward)
+    return (float(transformed[0, 0, 0]), float(transformed[0, 0, 1]))
+
+
+def transform_bbox_canonical_to_original(
     bbox_px: List[float],
-    inverse_matrix: Optional[np.ndarray] = None
+    M_inverse: np.ndarray
 ) -> List[float]:
-    if inverse_matrix is None or np.array_equal(inverse_matrix, np.eye(3)):
-        return bbox_px
+    """Transform bounding box [x1, y1, x2, y2] from canonical space to original image space."""
+    if M_inverse is None or np.array_equal(M_inverse, np.eye(3)):
+        return [float(x) for x in bbox_px]
 
     x1, y1, x2, y2 = bbox_px
     pts = np.array([
         [[x1, y1]], [[x2, y1]], [[x2, y2]], [[x1, y2]]
     ], dtype=np.float32)
 
-    transformed = cv2.perspectiveTransform(pts, inverse_matrix)
+    transformed = cv2.perspectiveTransform(pts, M_inverse)
     xs = transformed[:, 0, 0]
     ys = transformed[:, 0, 1]
 
     return [float(np.min(xs)), float(np.min(ys)), float(np.max(xs)), float(np.max(ys))]
+
+
+def transform_bbox_original_to_canonical(
+    bbox_px: List[float],
+    M_forward: np.ndarray
+) -> List[float]:
+    """Transform bounding box [x1, y1, x2, y2] from original space to canonical image space."""
+    if M_forward is None or np.array_equal(M_forward, np.eye(3)):
+        return [float(x) for x in bbox_px]
+
+    x1, y1, x2, y2 = bbox_px
+    pts = np.array([
+        [[x1, y1]], [[x2, y1]], [[x2, y2]], [[x1, y2]]
+    ], dtype=np.float32)
+
+    transformed = cv2.perspectiveTransform(pts, M_forward)
+    xs = transformed[:, 0, 0]
+    ys = transformed[:, 0, 1]
+
+    return [float(np.min(xs)), float(np.min(ys)), float(np.max(xs)), float(np.max(ys))]
+
+
+# Backward compatibility helper
+transform_bbox_inverse = transform_bbox_canonical_to_original

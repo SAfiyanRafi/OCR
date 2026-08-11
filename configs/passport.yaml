@@ -1,10 +1,18 @@
 document_type: passport
 language: en
+
+canonical:
+  width: 2000
+  height: 1408
+  aspect_ratio: 1.4205
+
 fields:
   passport_number:
     label: Passport Number
     language: en
+    script: latin
     strategy: hybrid
+    preprocessing_profile: passport_number
     normalization: passport_number
     validator: passport_number
     region:
@@ -12,15 +20,20 @@ fields:
       y1: 0.050
       x2: 0.950
       y2: 0.150
+      margin: 0.02
     anchor:
       keyword: Passport Number
       direction: right
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   surname:
     label: Surname
     language: en
+    script: latin
     strategy: hybrid
+    preprocessing_profile: standard
     normalization: uppercase
     validator: text_non_empty
     region:
@@ -28,15 +41,20 @@ fields:
       y1: 0.120
       x2: 0.650
       y2: 0.200
+      margin: 0.02
     anchor:
       keyword: Surname
       direction: below
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   given_names:
     label: Given Name
     language: en
+    script: latin
     strategy: hybrid
+    preprocessing_profile: standard
     normalization: uppercase
     validator: text_non_empty
     region:
@@ -44,15 +62,20 @@ fields:
       y1: 0.180
       x2: 0.650
       y2: 0.270
+      margin: 0.02
     anchor:
       keyword: Given Names
       direction: below
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   father_name:
     label: Father Name
     language: en
+    script: latin
     strategy: hybrid
+    preprocessing_profile: standard
     normalization: father_name_invert
     validator: text_non_empty
     region:
@@ -60,15 +83,20 @@ fields:
       y1: 0.400
       x2: 0.700
       y2: 0.500
+      margin: 0.02
     anchor:
       keyword: Father Name
       direction: below
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   date_of_birth:
     label: Date of Birth
     language: en
+    script: numeric
     strategy: hybrid
+    preprocessing_profile: date
     normalization: date
     validator: date
     region:
@@ -76,15 +104,20 @@ fields:
       y1: 0.270
       x2: 0.600
       y2: 0.360
+      margin: 0.02
     anchor:
       keyword: Date of Birth
       direction: below
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   date_of_issue:
     label: Date of Issue
     language: en
+    script: numeric
     strategy: hybrid
+    preprocessing_profile: date
     normalization: date
     validator: date
     region:
@@ -92,15 +125,20 @@ fields:
       y1: 0.450
       x2: 0.600
       y2: 0.540
+      margin: 0.02
     anchor:
       keyword: Date of Issue
       direction: below
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   date_of_expiry:
     label: Date of Expiry
     language: en
+    script: numeric
     strategy: hybrid
+    preprocessing_profile: date
     normalization: date
     validator: date
     region:
@@ -108,15 +146,20 @@ fields:
       y1: 0.520
       x2: 0.600
       y2: 0.620
+      margin: 0.02
     anchor:
       keyword: Date of Expiry
       direction: below
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true
 
   cnic_number:
     label: Citizen Number (CNIC)
     language: en
+    script: numeric
     strategy: hybrid
+    preprocessing_profile: numeric
     normalization: cnic
     validator: cnic_number
     region:
@@ -124,7 +167,10 @@ fields:
       y1: 0.280
       x2: 0.950
       y2: 0.380
+      margin: 0.02
     anchor:
       keyword: Citizen Number
       direction: right
+      max_distance: 500
+      vertical_tolerance: 50
       fallback_to_region: true

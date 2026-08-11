@@ -1,10 +1,10 @@
 """
 Multi-layer Debug Visualization Renderer.
-Renders raw OCR token bounding boxes (green), configured regions (blue),
-extracted fields (yellow), and validation/review badges.
+Renders raw OCR token bounding boxes (green), canonical field ROIs (yellow/cyan),
+original-space mapped bounding boxes, anchor vectors, and review status banners.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import cv2
 import numpy as np
 
@@ -36,12 +36,13 @@ def draw_debug_visualization(image: np.ndarray, result: Dict[str, Any]) -> np.nd
             x1, y1, x2, y2 = [int(v) for v in bbox_px]
             cv2.rectangle(canvas, (x1, y1), (x2, y2), (0, 255, 128), 1)
 
-    # Layer 2: Extracted Field Bounding Boxes (Yellow/Green Rectangles)
+    # Layer 2: Extracted Canonical Field ROIs & Provenance BBoxes
     for key, field_obj in fields.items():
         if isinstance(field_obj, dict):
-            bbox = field_obj.get("bbox")
+            bbox = field_obj.get("bbox_canonical") or field_obj.get("bbox")
             val = field_obj.get("value", "")
             validated = field_obj.get("validated", False)
+            field_conf = field_obj.get("field_confidence", field_obj.get("confidence", 0.0))
 
             if bbox and len(bbox) == 4 and (bbox[2] - bbox[0]) > 0:
                 x1, y1, x2, y2 = [int(v) for v in bbox]
@@ -49,8 +50,8 @@ def draw_debug_visualization(image: np.ndarray, result: Dict[str, Any]) -> np.nd
 
                 cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
 
-                label_str = f"{key}: {val}" if isinstance(val, str) else f"{key}"
-                label_str = label_str[:35]
+                val_str = val.get("en", str(val)) if isinstance(val, dict) else str(val)
+                label_str = f"{key}: {val_str[:25]} ({int(field_conf * 100)}%)"
                 badge = "[V]" if validated else "[?]"
 
                 cv2.putText(canvas, f"{badge} {label_str}", (x1, max(15, y1 - 6)),
@@ -60,7 +61,7 @@ def draw_debug_visualization(image: np.ndarray, result: Dict[str, Any]) -> np.nd
     banner_color = (0, 180, 80) if review_state == "AUTO_ACCEPT" else (0, 140, 240) if review_state == "NEEDS_REVIEW" else (0, 0, 220)
     cv2.rectangle(canvas, (0, 0), (w, 32), banner_color, -1)
     doc_type = result.get("document_type", "document").upper()
-    banner_text = f"{doc_type} | REVIEW STATE: {review_state}"
-    cv2.putText(canvas, banner_text, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2, cv2.LINE_AA)
+    banner_text = f"{doc_type} | CANONICAL FIELD OCR | REVIEW STATE: {review_state}"
+    cv2.putText(canvas, banner_text, (12, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
 
     return canvas
