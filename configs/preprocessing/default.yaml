@@ -1,0 +1,83 @@
+# Default Preprocessing Configuration
+
+resize:
+  enabled: true
+  min_width: 1600
+  max_width: 4000
+  interpolation: cubic
+
+exif:
+  auto_correct: true
+
+boundary:
+  enabled: true
+  confidence_threshold: 0.65
+  blur_kernel: 5
+  canny_low: 50
+  canny_high: 150
+  margin_percent: 1.0
+
+perspective:
+  enabled: true
+  confidence_threshold: 0.65
+  target_aspect_ratio: null # If null, computed from corners
+
+deskew:
+  enabled: true
+  max_angle: 25.0
+
+illumination:
+  enabled: adaptive
+  method: morph_close # morph_close or gaussian_divide
+  kernel_size: 51
+
+clahe:
+  enabled: adaptive
+  clip_limit: 2.0
+  tile_grid_size: [8, 8]
+
+denoise:
+  enabled: adaptive
+  method: bilateral # bilateral, nlm, gaussian, median
+  h_luminance: 3
+  search_window: 21
+  block_size: 7
+
+sharpen:
+  enabled: adaptive
+  method: unsharp_mask # unsharp_mask or laplacian
+  strength: mild # mild, medium, strong
+  amount: 0.5
+
+threshold:
+  enabled: false # Disabled by default to preserve Urdu & fine details
+  method: otsu # otsu, adaptive_gaussian, adaptive_mean
+  block_size: 11
+  c: 2
+
+morphology:
+  enabled: false
+  operation: opening # opening, closing, erosion, dilation
+  kernel_size: 3
+
+variants:
+  enabled: true
+  max_variants: 5
+  strategies:
+    - geometry_only
+    - illumination_corrected
+    - clahe_enhanced
+    - mild_denoise_sharpen
+    - grayscale_binarized
+
+quality_thresholds:
+  blur_laplacian_min: 100.0
+  contrast_min: 30.0
+  glare_percent_max: 5.0
+  shadow_std_max: 35.0
+
+performance:
+  enable_document_detection: true
+  enable_multiple_variants: true
+  max_variants: 4
+  enable_expensive_quality_checks: false

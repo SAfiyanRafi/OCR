@@ -1,0 +1,43 @@
+# Pakistani CNIC Preprocessing Configuration
+
+document_type: cnic
+
+geometry:
+  aspect_ratio: 1.5858 # ID-1 Standard (85.60 mm x 53.98 mm)
+  target_width: 2048
+  target_height: 1291
+
+resize:
+  min_width: 1600
+  max_width: 3200
+  interpolation: cubic
+
+boundary:
+  confidence_threshold: 0.60
+  canny_low: 40
+  canny_high: 130
+
+clahe:
+  enabled: adaptive
+  clip_limit: 1.8
+  tile_grid_size: [8, 8]
+
+denoise:
+  enabled: adaptive
+  method: bilateral
+
+urdu_preservation:
+  enabled: true
+  disable_threshold_for_urdu: true
+  denoise_strength: mild
+  sharpen_strength: mild
+
+regions:
+  urdu_name_zone:
+    bbox_relative: [0.35, 0.15, 0.95, 0.45] # relative [ymin, xmin, ymax, xmax]
+    denoise: mild
+    threshold: false
+  numeric_zone:
+    bbox_relative: [0.35, 0.50, 0.95, 0.85]
+    denoise: bilateral
+    contrast: medium

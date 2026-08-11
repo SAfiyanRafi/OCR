@@ -1,0 +1,17 @@
+# Dependencies for Pakistani Document Image Preprocessing & OCR Extraction System
+numpy>=1.24.0
+opencv-python>=4.7.0.72
+pillow>=9.5.0
+PyYAML>=6.0
+pydantic>=2.0.0
+click>=8.1.0
+fastapi>=0.95.0
+uvicorn>=0.22.0
+python-multipart>=0.0.6
+httpx>=0.24.0
+
+# Native OCR Engine for Python 3.14 (Runs PaddleOCR PP-OCRv4 models via ONNXRuntime)
+rapidocr-onnxruntime>=1.2.0
+
+# Testing & Quality
+pytest>=7.3.0

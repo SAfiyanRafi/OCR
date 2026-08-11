@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pakistani Identity Document OCR & Preprocessing System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Nastaliq+Urdu:wght@400;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-group">
+                <div class="logo-icon">🇵🇰</div>
+                <div>
+                    <h1>Pak Identity OCR Studio</h1>
+                    <p class="subtitle">Production-Grade Adaptive Preprocessing & Configurable Field Extractor</p>
+                </div>
+            </div>
+            <div class="header-nav">
+                <button class="nav-btn active" id="tab-extract-btn" onclick="switchTab('extract')">🔍 OCR Extraction</button>
+                <button class="nav-btn" id="tab-calibrate-btn" onclick="switchTab('calibrate')">🎯 Config & Region Calibrator</button>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- TAB 1: OCR Extraction Studio -->
+            <section id="tab-extract" class="tab-section active">
+                <div class="workspace-grid">
+                    <!-- Left Control Panel -->
+                    <div class="card control-card">
+                        <h2>Document Upload</h2>
+                        
+                        <div class="form-group">
+                            <label for="doc-type-select">Document Configuration Profile</label>
+                            <select id="doc-type-select" class="custom-select">
+                                <option value="auto" selected>✨ Auto-Detect Document Type</option>
+                                <option value="cnic_front">Pakistani CNIC (Front Side)</option>
+                                <option value="cnic_back">Pakistani CNIC (Back Side)</option>
+                                <option value="passport">Pakistani Passport (Biodata Page)</option>
+                            </select>
+                        </div>
+
+                        <!-- Dropzone -->
+                        <div class="dropzone" id="image-dropzone" onclick="document.getElementById('file-input').click()">
+                            <input type="file" id="file-input" accept="image/*" style="display:none" onchange="handleFileSelect(event)">
+                            <div class="dropzone-content" id="dropzone-prompt">
+                                <div class="upload-icon">📸</div>
+                                <p class="drop-text">Drag & drop document image here</p>
+                                <p class="drop-subtext">Supports JPG, PNG, WEBP, TIFF</p>
+                                <button class="btn btn-secondary">Browse Files</button>
+                            </div>
+                            <img id="image-preview" class="image-preview" style="display:none" alt="Selected Document Preview">
+                        </div>
+
+                        <div class="action-bar" style="margin-top: 16px;">
+                            <button class="btn btn-primary btn-block" id="process-btn" onclick="processDocument()" disabled>
+                                🚀 Run Preprocessing & OCR
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right Results Area -->
+                    <div class="results-area">
+                        <!-- Quality Indicators & Review Status Bar -->
+                        <div class="card status-bar-card" id="status-bar" style="display:none">
+                            <div class="status-top">
+                                <div class="status-left-group">
+                                    <div class="status-pill" id="status-pill">
+                                        <span id="status-indicator" class="indicator-dot"></span>
+                                        <span id="status-text">Usable Quality</span>
+                                    </div>
+                                    <div class="review-state-badge" id="review-state-badge">
+                                        AUTO_ACCEPT
+                                    </div>
+                                </div>
+                                <div class="metrics-summary">
+                                    <span class="metric-item">Blur Score: <strong id="metric-blur">-</strong></span>
+                                    <span class="metric-item">Overall Score: <strong id="metric-overall">-</strong></span>
+                                    <span class="metric-item">Engine: <strong id="metric-engine">RapidOCR ONNX</strong></span>
+                                </div>
+                            </div>
+                            <!-- Adaptive Preprocessing Audit Log -->
+                            <div class="prep-audit-box" id="prep-audit-box">
+                                <span class="audit-title">⚡ Preprocessing Applied:</span>
+                                <div class="audit-badges" id="audit-badges"></div>
+                            </div>
+                        </div>
+
+                        <!-- Results View Options -->
+                        <div class="card results-card" id="results-card" style="display:none">
+                            <div class="results-header">
+                                <div class="view-toggle">
+                                    <button class="toggle-btn active" id="view-fields-btn" onclick="toggleResultView('fields')">Structured Fields</button>
+                                    <button class="toggle-btn" id="view-debug-btn" onclick="toggleResultView('debug')">Debug Visualization</button>
+                                    <button class="toggle-btn" id="view-json-btn" onclick="toggleResultView('json')">Raw JSON</button>
+                                </div>
+                            </div>
+
+                            <!-- Structured Fields View -->
+                            <div id="view-fields" class="result-pane active">
+                                <!-- Bilingual Container -->
+                                <div id="bilingual-container" class="bilingual-box" style="display:none">
+                                    <div class="bilingual-card">
+                                        <span class="card-label">Name</span>
+                                        <div class="bilingual-values">
+                                            <span class="en-val" id="name-en-val">-</span>
+                                            <span class="ur-val" id="name-ur-val">-</span>
+                                        </div>
+                                    </div>
+                                    <div class="bilingual-card">
+                                        <span class="card-label">Father Name</span>
+                                        <div class="bilingual-values">
+                                            <span class="en-val" id="father-en-val">-</span>
+                                            <span class="ur-val" id="father-ur-val">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Field Cards Grid -->
+                                <div class="fields-grid" id="fields-grid"></div>
+                            </div>
+
+                            <!-- Debug Visualization View -->
+                            <div id="view-debug" class="result-pane" style="display:none">
+                                <div class="debug-image-wrapper">
+                                    <img id="debug-overlay-img" class="debug-overlay-img" src="" alt="Annotated OCR Debug Overlay">
+                                </div>
+                            </div>
+
+                            <!-- Raw JSON View -->
+                            <div id="view-json" class="result-pane" style="display:none">
+                                <pre class="json-code" id="json-code"></pre>
+                            </div>
+                        </div>
+
+                        <!-- Empty State -->
+                        <div class="card empty-card" id="empty-state">
+                            <div class="empty-content">
+                                <div class="empty-icon">📄</div>
+                                <h3>No Document Processed Yet</h3>
+                                <p>Upload a Pakistani CNIC or Passport image on the left and click "Run Preprocessing & OCR" to view extracted fields, bilingual Urdu & English cards, and adaptive preprocessing transformations.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 2: Config Manager & Calibrator -->
+            <section id="tab-calibrate" class="tab-section" style="display:none">
+                <div class="calibrator-grid">
+                    <!-- Left Image Canvas Editor -->
+                    <div class="card canvas-card">
+                        <div class="canvas-header">
+                            <h3>Document Region Draw Tool</h3>
+                            <p class="subtext">Click and drag a rectangle on the document image to select normalized coordinates (0.0 - 1.0)</p>
+                        </div>
+                        <div class="canvas-container" id="canvas-container">
+                            <canvas id="calibrator-canvas"></canvas>
+                        </div>
+                        
+                        <!-- List of Configured Fields for Current Config -->
+                        <div class="configured-fields-panel" style="margin-top: 16px;">
+                            <h4>Configured Fields in <span id="current-config-label">passport.yaml</span></h4>
+                            <div class="configured-fields-list" id="configured-fields-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- Right Calibration Controls -->
+                    <div class="card calibrator-controls">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <h2>Field Configuration Editor</h2>
+                            <button class="btn btn-secondary btn-sm" onclick="showNewConfigModal()">➕ New Config File</button>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="calib-config-select">Target Configuration File</label>
+                            <select id="calib-config-select" class="custom-select" onchange="onConfigSelectChange()">
+                                <option value="passport.yaml">passport.yaml</option>
+                                <option value="cnic_front.yaml">cnic_front.yaml</option>
+                                <option value="cnic_back.yaml">cnic_back.yaml</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="calib-field-select">Quick Select Existing Field to Edit</label>
+                            <select id="calib-field-select" class="custom-select" onchange="onFieldSelectChange()">
+                                <option value="">-- Add New Field or Select Existing --</option>
+                            </select>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-field-key">Field Key Name (Unique ID)</label>
+                                <input type="text" id="calib-field-key" class="custom-input" placeholder="e.g. passport_number, cnic_number">
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-field-label">Display Label</label>
+                                <input type="text" id="calib-field-label" class="custom-input" placeholder="e.g. Passport Number">
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-strategy">Extraction Strategy</label>
+                                <select id="calib-strategy" class="custom-select" onchange="toggleAnchorInputs()">
+                                    <option value="region">Fixed Normalized Region</option>
+                                    <option value="anchor">Anchor-Based Directional</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-language">Field Language</label>
+                                <select id="calib-language" class="custom-select">
+                                    <option value="en">English / Latin</option>
+                                    <option value="ur">Urdu</option>
+                                    <option value="both">Bilingual</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Anchor Configuration Inputs -->
+                        <div class="form-row" id="anchor-inputs-row" style="display:none">
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-anchor-kw">Anchor Label Keyword</label>
+                                <input type="text" id="calib-anchor-kw" class="custom-input" placeholder="e.g. Name, Date of Birth">
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-anchor-dir">Anchor Direction</label>
+                                <select id="calib-anchor-dir" class="custom-select">
+                                    <option value="right">Right (e.g. Name -> MUHAMMAD)</option>
+                                    <option value="below">Below (e.g. Date of Birth -> 15.08.1990)</option>
+                                    <option value="left">Left</option>
+                                    <option value="above">Above</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Normalized Bounding Box Coordinates (0.0 - 1.0)</label>
+                            <div class="coord-inputs">
+                                <div><span class="coord-label">x1</span><input type="number" step="0.01" id="calib-x1" class="custom-input" value="0.20" oninput="onCoordInputChange()"></div>
+                                <div><span class="coord-label">y1</span><input type="number" step="0.01" id="calib-y1" class="custom-input" value="0.50" oninput="onCoordInputChange()"></div>
+                                <div><span class="coord-label">x2</span><input type="number" step="0.01" id="calib-x2" class="custom-input" value="0.85" oninput="onCoordInputChange()"></div>
+                                <div><span class="coord-label">y2</span><input type="number" step="0.01" id="calib-y2" class="custom-input" value="0.65" oninput="onCoordInputChange()"></div>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-normalization">Normalization Module</label>
+                                <select id="calib-normalization" class="custom-select">
+                                    <option value="none">none (Raw OCR text)</option>
+                                    <option value="cnic">cnic (XXXXX-XXXXXXX-X)</option>
+                                    <option value="passport_number">passport_number (Uppercase Alphanumeric)</option>
+                                    <option value="date">date (DD.MM.YYYY)</option>
+                                    <option value="uppercase">uppercase</option>
+                                    <option value="digits_only">digits_only</option>
+                                    <option value="uppercase_mrz">uppercase_mrz</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" style="flex:1">
+                                <label for="calib-validator">Validator Module</label>
+                                <select id="calib-validator" class="custom-select">
+                                    <option value="none">none</option>
+                                    <option value="cnic_number">cnic_number</option>
+                                    <option value="passport_number">passport_number</option>
+                                    <option value="mrz_line">mrz_line</option>
+                                    <option value="date">date</option>
+                                    <option value="text_non_empty">text_non_empty</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="action-bar">
+                            <button class="btn btn-success btn-block" onclick="saveCalibratedRegion()">
+                                💾 Save Field Configuration
+                            </button>
+                        </div>
+                        <div id="calib-feedback" class="feedback-msg" style="display:none"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/ui/app.js"></script>
+</body>
+</html>

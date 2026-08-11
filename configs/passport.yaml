@@ -1,0 +1,130 @@
+document_type: passport
+language: en
+fields:
+  passport_number:
+    label: Passport Number
+    language: en
+    strategy: hybrid
+    normalization: passport_number
+    validator: passport_number
+    region:
+      x1: 0.600
+      y1: 0.050
+      x2: 0.950
+      y2: 0.150
+    anchor:
+      keyword: Passport Number
+      direction: right
+      fallback_to_region: true
+
+  surname:
+    label: Surname
+    language: en
+    strategy: hybrid
+    normalization: uppercase
+    validator: text_non_empty
+    region:
+      x1: 0.300
+      y1: 0.120
+      x2: 0.650
+      y2: 0.200
+    anchor:
+      keyword: Surname
+      direction: below
+      fallback_to_region: true
+
+  given_names:
+    label: Given Name
+    language: en
+    strategy: hybrid
+    normalization: uppercase
+    validator: text_non_empty
+    region:
+      x1: 0.300
+      y1: 0.180
+      x2: 0.650
+      y2: 0.270
+    anchor:
+      keyword: Given Names
+      direction: below
+      fallback_to_region: true
+
+  father_name:
+    label: Father Name
+    language: en
+    strategy: hybrid
+    normalization: father_name_invert
+    validator: text_non_empty
+    region:
+      x1: 0.300
+      y1: 0.400
+      x2: 0.700
+      y2: 0.500
+    anchor:
+      keyword: Father Name
+      direction: below
+      fallback_to_region: true
+
+  date_of_birth:
+    label: Date of Birth
+    language: en
+    strategy: hybrid
+    normalization: date
+    validator: date
+    region:
+      x1: 0.300
+      y1: 0.270
+      x2: 0.600
+      y2: 0.360
+    anchor:
+      keyword: Date of Birth
+      direction: below
+      fallback_to_region: true
+
+  date_of_issue:
+    label: Date of Issue
+    language: en
+    strategy: hybrid
+    normalization: date
+    validator: date
+    region:
+      x1: 0.300
+      y1: 0.450
+      x2: 0.600
+      y2: 0.540
+    anchor:
+      keyword: Date of Issue
+      direction: below
+      fallback_to_region: true
+
+  date_of_expiry:
+    label: Date of Expiry
+    language: en
+    strategy: hybrid
+    normalization: date
+    validator: date
+    region:
+      x1: 0.300
+      y1: 0.520
+      x2: 0.600
+      y2: 0.620
+    anchor:
+      keyword: Date of Expiry
+      direction: below
+      fallback_to_region: true
+
+  cnic_number:
+    label: Citizen Number (CNIC)
+    language: en
+    strategy: hybrid
+    normalization: cnic
+    validator: cnic_number
+    region:
+      x1: 0.600
+      y1: 0.280
+      x2: 0.950
+      y2: 0.380
+    anchor:
+      keyword: Citizen Number
+      direction: right
+      fallback_to_region: true

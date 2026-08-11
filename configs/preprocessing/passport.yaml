@@ -1,0 +1,31 @@
+# Pakistani Passport Preprocessing Configuration
+
+document_type: passport
+
+geometry:
+  aspect_ratio: 1.4205 # ID-3 Standard (125 mm x 88 mm)
+  target_width: 2500
+  target_height: 1760
+
+resize:
+  min_width: 1800
+  max_width: 4000
+  interpolation: cubic
+
+boundary:
+  confidence_threshold: 0.65
+  canny_low: 50
+  canny_high: 150
+
+mrz:
+  enabled: true
+  bbox_relative: [0.70, 0.0, 1.0, 1.0] # bottom 30% of passport page
+  target_char_height: 35
+  contrast_boost: true
+  binarize: true
+  binarize_method: otsu
+
+clahe:
+  enabled: adaptive
+  clip_limit: 2.0
+  tile_grid_size: [8, 8]
